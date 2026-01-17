@@ -303,25 +303,29 @@ export class InferenceEngine {
     const timePerSession = availableTime; // Each day should fit within availableTime
     
     let totalCalories = 0;
-    let totalDuration = 0;
 
-    // Calculate how much time each exercise takes (including rest between sets)
-    const getExerciseTotalTime = (scheduled: ScheduledExercise): number => {
-      const exerciseTime = scheduled.exercise.durationMinutes;
-      const restTime = (scheduled.sets - 1) * (scheduled.restSeconds / 60); // Rest between sets in minutes
-      return exerciseTime + restTime;
-    };
-
-    // Select exercises that fit within the time limit
-    const selectedExercises: ScheduledExercise[] = [];
-    let currentTime = 0;
+    // Fixed time allocations
     const warmupTime = 5; // 5 minutes for warmup
     const cooldownTime = 3; // 3 minutes for cooldown
     const effectiveTime = timePerSession - warmupTime - cooldownTime;
 
+    // Calculate time per exercise more accurately
+    // Time = (reps * seconds per rep + rest between sets) * sets
+    // Average: ~30 seconds per set of work + rest time
+    const calculateExerciseTime = (scheduled: ScheduledExercise): number => {
+      const workTimePerSet = 0.75; // ~45 seconds of actual work per set in minutes
+      const restTimePerSet = scheduled.restSeconds / 60; // Convert rest to minutes
+      const totalTime = scheduled.sets * (workTimePerSet + restTimePerSet);
+      return totalTime;
+    };
+
+    // First pass: add all exercises with base sets
+    const selectedExercises: ScheduledExercise[] = [];
+    let currentTime = 0;
+
     for (const ex of exercises) {
       const adjusted = this.adjustForGoal(ex, goal, wcs);
-      const exerciseTime = getExerciseTotalTime(adjusted);
+      const exerciseTime = calculateExerciseTime(adjusted);
       
       if (currentTime + exerciseTime <= effectiveTime) {
         selectedExercises.push(adjusted);
@@ -330,18 +334,63 @@ export class InferenceEngine {
       }
     }
 
-    // If we have very few exercises, adjust sets to fill time
-    if (selectedExercises.length < 3 && currentTime < effectiveTime * 0.7) {
+    // Second pass: add more exercises from the pool if we have time left
+    const remainingExercises = exercises.filter(
+      ex => !selectedExercises.some(se => se.exercise.id === ex.id)
+    );
+    
+    for (const ex of remainingExercises) {
+      if (currentTime >= effectiveTime * 0.9) break; // Stop if we're at 90% capacity
+      
+      const adjusted = this.adjustForGoal(ex, goal, wcs);
+      const exerciseTime = calculateExerciseTime(adjusted);
+      
+      if (currentTime + exerciseTime <= effectiveTime) {
+        selectedExercises.push(adjusted);
+        currentTime += exerciseTime;
+        totalCalories += adjusted.exercise.caloriesPerSet * adjusted.sets;
+      }
+    }
+
+    // Third pass: increase sets to fill remaining time more aggressively
+    const timeRemaining = effectiveTime - currentTime;
+    if (timeRemaining > 2 && selectedExercises.length > 0) {
+      // Calculate how many additional sets we can add
+      const avgRestTime = selectedExercises.reduce((sum, ex) => sum + ex.restSeconds, 0) / selectedExercises.length / 60;
+      const timePerAdditionalSet = 0.75 + avgRestTime; // work time + rest
+      const totalAdditionalSets = Math.floor(timeRemaining / timePerAdditionalSet);
+      const setsPerExercise = Math.ceil(totalAdditionalSets / selectedExercises.length);
+
       for (const scheduled of selectedExercises) {
-        const additionalSets = Math.floor((effectiveTime - currentTime) / selectedExercises.length / 3);
+        const additionalSets = Math.min(setsPerExercise, 3); // Max 3 additional sets per exercise
         if (additionalSets > 0) {
+          const oldSets = scheduled.sets;
           scheduled.sets = Math.min(scheduled.sets + additionalSets, 6);
-          totalCalories += scheduled.exercise.caloriesPerSet * additionalSets;
+          const setsAdded = scheduled.sets - oldSets;
+          currentTime += setsAdded * (0.75 + scheduled.restSeconds / 60);
+          totalCalories += scheduled.exercise.caloriesPerSet * setsAdded;
         }
       }
     }
 
-    totalDuration = warmupTime + currentTime + cooldownTime;
+    // Fourth pass: if still under time, add a finisher circuit
+    if (currentTime < effectiveTime * 0.85 && selectedExercises.length > 0) {
+      // Add extra sets with reduced rest (circuit style)
+      for (const scheduled of selectedExercises) {
+        if (currentTime >= effectiveTime * 0.95) break;
+        const circuitSet = 1;
+        const circuitRest = 0.5; // 30 seconds rest for circuit
+        const circuitTime = 0.75 + circuitRest;
+        
+        if (currentTime + circuitTime <= effectiveTime) {
+          scheduled.sets += circuitSet;
+          currentTime += circuitTime;
+          totalCalories += scheduled.exercise.caloriesPerSet;
+        }
+      }
+    }
+
+    const totalDuration = warmupTime + Math.round(currentTime) + cooldownTime;
 
     sessions.push({
       sessionNumber: 1,
