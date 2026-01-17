@@ -206,15 +206,14 @@ export class InferenceEngine {
     const days: WorkoutDay[] = [];
     const dayNames = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-    // Calculate exercises per session based on available time
-    const avgExerciseDuration = 5; // minutes per exercise including rest
-    const exercisesPerSession = Math.floor(availableTime / avgExerciseDuration);
-    const sessionsPerDay = availableTime <= 30 ? 2 : 1; // Multiple sessions for shorter time
+    // Calculate approximate exercises per session based on available time
+    const warmupCooldown = 8; // 5min warmup + 3min cooldown
+    const avgExerciseDuration = 6; // minutes per exercise including rest
+    const exercisesPerSession = Math.floor((availableTime - warmupCooldown) / avgExerciseDuration);
+    const sessionsPerDay = 1; // Each session fits within availableTime
 
-    this.addLog('optimization', `Time Optimization: ${exercisesPerSession} exercises per ${availableTime} min session`);
-    if (sessionsPerDay > 1) {
-      this.addLog('optimization', `Split Sessions: ${sessionsPerDay} sessions/day to fit time constraint`);
-    }
+    this.addLog('optimization', `Time Per Session: ${availableTime} minutes (including ${warmupCooldown}min warmup/cooldown)`);
+    this.addLog('optimization', `Estimated Exercises Per Day: ~${exercisesPerSession} exercises to fit time limit`);
 
     // Generate days based on split type
     if (trainingDays === 2) {
@@ -301,41 +300,60 @@ export class InferenceEngine {
     sessionsPerDay: number
   ): WorkoutDay {
     const sessions: WorkoutSession[] = [];
-    const exercisesPerSession = Math.ceil(exercises.length / sessionsPerDay);
+    const timePerSession = availableTime; // Each day should fit within availableTime
     
     let totalCalories = 0;
     let totalDuration = 0;
 
-    for (let s = 0; s < sessionsPerDay; s++) {
-      const sessionExercises = exercises.slice(
-        s * exercisesPerSession,
-        (s + 1) * exercisesPerSession
-      );
+    // Calculate how much time each exercise takes (including rest between sets)
+    const getExerciseTotalTime = (scheduled: ScheduledExercise): number => {
+      const exerciseTime = scheduled.exercise.durationMinutes;
+      const restTime = (scheduled.sets - 1) * (scheduled.restSeconds / 60); // Rest between sets in minutes
+      return exerciseTime + restTime;
+    };
 
-      const scheduled: ScheduledExercise[] = sessionExercises.map((ex) => {
-        const adjusted = this.adjustForGoal(ex, goal, wcs);
+    // Select exercises that fit within the time limit
+    const selectedExercises: ScheduledExercise[] = [];
+    let currentTime = 0;
+    const warmupTime = 5; // 5 minutes for warmup
+    const cooldownTime = 3; // 3 minutes for cooldown
+    const effectiveTime = timePerSession - warmupTime - cooldownTime;
+
+    for (const ex of exercises) {
+      const adjusted = this.adjustForGoal(ex, goal, wcs);
+      const exerciseTime = getExerciseTotalTime(adjusted);
+      
+      if (currentTime + exerciseTime <= effectiveTime) {
+        selectedExercises.push(adjusted);
+        currentTime += exerciseTime;
         totalCalories += adjusted.exercise.caloriesPerSet * adjusted.sets;
-        return adjusted;
-      });
-
-      const sessionDuration = scheduled.reduce(
-        (acc, s) => acc + s.exercise.durationMinutes,
-        0
-      );
-      totalDuration += sessionDuration;
-
-      sessions.push({
-        sessionNumber: s + 1,
-        exercises: scheduled,
-        duration: Math.min(sessionDuration, availableTime / sessionsPerDay),
-      });
+      }
     }
+
+    // If we have very few exercises, adjust sets to fill time
+    if (selectedExercises.length < 3 && currentTime < effectiveTime * 0.7) {
+      for (const scheduled of selectedExercises) {
+        const additionalSets = Math.floor((effectiveTime - currentTime) / selectedExercises.length / 3);
+        if (additionalSets > 0) {
+          scheduled.sets = Math.min(scheduled.sets + additionalSets, 6);
+          totalCalories += scheduled.exercise.caloriesPerSet * additionalSets;
+        }
+      }
+    }
+
+    totalDuration = warmupTime + currentTime + cooldownTime;
+
+    sessions.push({
+      sessionNumber: 1,
+      exercises: selectedExercises,
+      duration: Math.round(totalDuration),
+    });
 
     return {
       dayName,
       focus,
       sessions,
-      totalDuration,
+      totalDuration: Math.round(totalDuration),
       totalCalories,
     };
   }

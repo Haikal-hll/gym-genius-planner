@@ -121,6 +121,17 @@ export const WorkoutSchedule: React.FC<WorkoutScheduleProps> = ({ workoutPlan })
                 </div>
               )}
 
+              {/* Warmup indicator */}
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20 mb-3">
+                <div className="w-6 h-6 rounded-full bg-yellow-500/20 flex items-center justify-center">
+                  <span className="text-yellow-400 text-xs">🔥</span>
+                </div>
+                <div className="flex-1">
+                  <span className="text-sm font-medium text-yellow-400">Warm-up</span>
+                  <span className="text-xs text-muted-foreground ml-2">5 minutes - Light cardio & dynamic stretches</span>
+                </div>
+              </div>
+
               {/* Exercises */}
               {day.sessions
                 .filter((s) => day.sessions.length === 1 || s.sessionNumber === expandedSession)
@@ -136,6 +147,17 @@ export const WorkoutSchedule: React.FC<WorkoutScheduleProps> = ({ workoutPlan })
                     ))}
                   </div>
                 ))}
+
+              {/* Cooldown indicator */}
+              <div className="flex items-center gap-2 p-3 rounded-lg bg-blue-500/10 border border-blue-500/20 mt-3">
+                <div className="w-6 h-6 rounded-full bg-blue-500/20 flex items-center justify-center">
+                  <span className="text-blue-400 text-xs">❄️</span>
+                </div>
+                <div className="flex-1">
+                  <span className="text-sm font-medium text-blue-400">Cool-down</span>
+                  <span className="text-xs text-muted-foreground ml-2">3 minutes - Static stretches & breathing</span>
+                </div>
+              </div>
             </div>
           )}
         </div>
