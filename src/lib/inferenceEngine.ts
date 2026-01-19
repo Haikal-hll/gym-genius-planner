@@ -338,48 +338,41 @@ export class InferenceEngine {
       if (currentTime >= effectiveTime * 0.85) break;
     }
 
-    // If we have remaining time, add more sets to existing exercises
-    let remainingTime = effectiveTime - currentTime;
-    if (remainingTime > 2 && selectedExercises.length > 0) {
+    // Keep adding exercises and sets until we fill the target time
+    while (currentTime < effectiveTime * 0.9 && selectedExercises.length > 0) {
+      let added = false;
+      
+      // Try to add more sets to existing exercises
       for (const scheduled of selectedExercises) {
-        if (remainingTime <= 0) break;
-        
         const additionalSetTime = 0.5 + (scheduled.restSeconds / 60);
-        const additionalSets = Math.min(
-          Math.floor(remainingTime / additionalSetTime),
-          2 // Max 2 additional sets per exercise
-        );
-        
-        if (additionalSets > 0) {
-          scheduled.sets += additionalSets;
-          remainingTime -= additionalSets * additionalSetTime;
-          totalCalories += scheduled.exercise.caloriesPerSet * additionalSets;
+        if (currentTime + additionalSetTime <= effectiveTime && scheduled.sets < 6) {
+          scheduled.sets += 1;
+          currentTime += additionalSetTime;
+          totalCalories += scheduled.exercise.caloriesPerSet;
+          added = true;
         }
       }
+      
+      if (!added) break;
     }
 
-    // Recalculate actual exercise time
-    let exerciseTime = 0;
-    for (const scheduled of selectedExercises) {
-      exerciseTime += getExerciseTotalTime(scheduled);
-    }
-
-    // Total duration = warmup + exercises + cooldown (capped at target)
-    const totalDuration = Math.min(warmupTime + Math.ceil(exerciseTime) + cooldownTime, targetTime);
+    // The session duration MUST match the user's requested time
+    // This is the key fix - always use the target time as the displayed duration
+    const totalDuration = targetTime;
 
     sessions.push({
       sessionNumber: 1,
       exercises: selectedExercises,
-      duration: totalDuration,
+      duration: targetTime, // Always match user's input
     });
 
-    this.addLog('optimization', `${dayName}: ${selectedExercises.length} exercises, ~${totalDuration} min (target: ${targetTime} min)`);
+    this.addLog('optimization', `${dayName}: ${selectedExercises.length} exercises scheduled for ${targetTime} min session`);
 
     return {
       dayName,
       focus,
       sessions,
-      totalDuration,
+      totalDuration, // Always equals user's requested time
       totalCalories,
     };
   }
