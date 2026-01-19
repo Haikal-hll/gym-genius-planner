@@ -300,26 +300,31 @@ export class InferenceEngine {
     sessionsPerDay: number
   ): WorkoutDay {
     const sessions: WorkoutSession[] = [];
-    const timePerSession = availableTime; // Each day should fit within availableTime
+    const targetTime = availableTime; // User's requested time per session
     
     let totalCalories = 0;
-    let totalDuration = 0;
 
-    // Calculate how much time each exercise takes (including rest between sets)
+    // Calculate time for one exercise: (sets × time per set) + (rest between sets)
+    // Assume ~30 seconds per set execution, plus rest time
     const getExerciseTotalTime = (scheduled: ScheduledExercise): number => {
-      const exerciseTime = scheduled.exercise.durationMinutes;
-      const restTime = (scheduled.sets - 1) * (scheduled.restSeconds / 60); // Rest between sets in minutes
+      const timePerSet = 0.5; // 30 seconds per set in minutes
+      const exerciseTime = scheduled.sets * timePerSet;
+      const restTime = (scheduled.sets - 1) * (scheduled.restSeconds / 60);
       return exerciseTime + restTime;
     };
 
-    // Select exercises that fit within the time limit
-    const selectedExercises: ScheduledExercise[] = [];
-    let currentTime = 0;
     const warmupTime = 5; // 5 minutes for warmup
     const cooldownTime = 3; // 3 minutes for cooldown
-    const effectiveTime = timePerSession - warmupTime - cooldownTime;
+    const effectiveTime = targetTime - warmupTime - cooldownTime;
 
-    for (const ex of exercises) {
+    // Select exercises that fit within the effective time
+    const selectedExercises: ScheduledExercise[] = [];
+    let currentTime = 0;
+
+    // Shuffle exercises to get variety
+    const shuffledExercises = [...exercises].sort(() => Math.random() - 0.5);
+
+    for (const ex of shuffledExercises) {
       const adjusted = this.adjustForGoal(ex, goal, wcs);
       const exerciseTime = getExerciseTotalTime(adjusted);
       
@@ -328,32 +333,53 @@ export class InferenceEngine {
         currentTime += exerciseTime;
         totalCalories += adjusted.exercise.caloriesPerSet * adjusted.sets;
       }
+      
+      // Stop if we've filled at least 85% of available time
+      if (currentTime >= effectiveTime * 0.85) break;
     }
 
-    // If we have very few exercises, adjust sets to fill time
-    if (selectedExercises.length < 3 && currentTime < effectiveTime * 0.7) {
+    // If we have remaining time, add more sets to existing exercises
+    let remainingTime = effectiveTime - currentTime;
+    if (remainingTime > 2 && selectedExercises.length > 0) {
       for (const scheduled of selectedExercises) {
-        const additionalSets = Math.floor((effectiveTime - currentTime) / selectedExercises.length / 3);
+        if (remainingTime <= 0) break;
+        
+        const additionalSetTime = 0.5 + (scheduled.restSeconds / 60);
+        const additionalSets = Math.min(
+          Math.floor(remainingTime / additionalSetTime),
+          2 // Max 2 additional sets per exercise
+        );
+        
         if (additionalSets > 0) {
-          scheduled.sets = Math.min(scheduled.sets + additionalSets, 6);
+          scheduled.sets += additionalSets;
+          remainingTime -= additionalSets * additionalSetTime;
           totalCalories += scheduled.exercise.caloriesPerSet * additionalSets;
         }
       }
     }
 
-    totalDuration = warmupTime + currentTime + cooldownTime;
+    // Recalculate actual exercise time
+    let exerciseTime = 0;
+    for (const scheduled of selectedExercises) {
+      exerciseTime += getExerciseTotalTime(scheduled);
+    }
+
+    // Total duration = warmup + exercises + cooldown (capped at target)
+    const totalDuration = Math.min(warmupTime + Math.ceil(exerciseTime) + cooldownTime, targetTime);
 
     sessions.push({
       sessionNumber: 1,
       exercises: selectedExercises,
-      duration: Math.round(totalDuration),
+      duration: totalDuration,
     });
+
+    this.addLog('optimization', `${dayName}: ${selectedExercises.length} exercises, ~${totalDuration} min (target: ${targetTime} min)`);
 
     return {
       dayName,
       focus,
       sessions,
-      totalDuration: Math.round(totalDuration),
+      totalDuration,
       totalCalories,
     };
   }
